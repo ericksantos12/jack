@@ -1,26 +1,36 @@
 import json
-import requests
-from backend import log, igdb_client_id, igdb_client_secret
-from igdb.wrapper import IGDBWrapper
 import re
 
+import requests
+from igdb.wrapper import IGDBWrapper
 
-async def retrieve_game_links(game_name) -> dict:
-    r = requests.get(
-        f"https://hydralinks.cloud/sources/steamrip.json",
-        headers={"Accept": "application/json"},
-    )
-    json_data = json.loads(r.text)
-    downloads = json_data.get("downloads", [])
+from backend import igdb_client_id, igdb_client_secret, log
+from utils.game_providers import GameProvider
+
+
+async def retrieve_game_links(game_name: str, provider: GameProvider) -> dict:
+    """
+    Asynchronously retrieves game links based on the provided game name and game provider.
+    Args:
+        game_name (str): The name of the game to search for.
+        provider (GameProvider): An instance of GameProvider to retrieve the game list from.
+    Returns:
+        dict: A dictionary containing the found games with their titles and stripped titles if any matches are found.
+        None: If no games match the provided game name.
+    """
+
+    game_list = provider.get_game_list()
 
     found_games = []
 
-    for game in downloads:
+    for game in game_list:
         stripped_title = strip_game_title(game.get("title", ""))
 
         title = game.get("title", "").lower()
         if game_name.lower() in title:
             game.update({"stripped_title": stripped_title})
+            game.update({"download_type": provider.get_download_type()})
+            game.update({"provider_logo": provider.get_logo()})
             found_games.append(game)
 
     if found_games:
@@ -29,6 +39,16 @@ async def retrieve_game_links(game_name) -> dict:
 
 
 def retrieve_game_details(game_name: str):
+    """
+    Retrieve detailed information about a game from the IGDB API and Steam.
+    Args:
+        game_name (str): The name of the game to retrieve details for.
+    Returns:
+        dict: A dictionary containing the game's cover image, summary, total rating, 
+              and a header image URL from Steam.
+    Raises:
+        Exception: If there is an issue with the API requests or data parsing.
+    """
     wrapper = IGDBWrapper(igdb_client_id, get_token())
 
     game_byte_array = wrapper.api_request(
@@ -49,6 +69,16 @@ def retrieve_game_details(game_name: str):
     return game_details
 
 def get_token():
+    """
+    Fetches an OAuth2 access token from Twitch.
+
+    This function sends a POST request to the Twitch OAuth2 token endpoint
+    with the client ID, client secret, and grant type as parameters. It
+    returns the access token if the request is successful.
+
+    Returns:
+        str: The access token if the request is successful, otherwise None.
+    """
     r = requests.post(
         "https://id.twitch.tv/oauth2/token",
         params={
@@ -60,7 +90,17 @@ def get_token():
     return json.loads(r.text).get("access_token", None)
 
 def strip_game_title(title: str) -> str:
-    # Split the title based on specific keywords or a pattern that starts with a number
+    """
+    Strips unnecessary parts from a game title.
+    This function removes specific keywords such as "Free Download" and "Build" 
+    from the title. Additionally, it uses a regular expression to remove any 
+    version numbers that start with a number followed by dots and digits.
+    Args:
+        title (str): The original game title.
+    Returns:
+        str: The cleaned game title.
+    """
+    # Split the title based on specific keywords
     for keyword in ["Free Download", "Build"]:
         title = title.split(keyword, 1)[0].strip()
 

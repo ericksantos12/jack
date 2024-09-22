@@ -6,6 +6,7 @@ from discord.commands import Option
 from backend import log, error_template
 
 from utils.game_info import retrieve_game_details, retrieve_game_links
+from utils.game_providers import FitGirlProvider, SteamRipProvider
 
 
 class Game(commands.Cog):
@@ -22,87 +23,114 @@ class Game(commands.Cog):
         self,
         ctx,
         name: Option(str, "The game you want to search for", required=True),
-        # provider: Option(choices=["SteamRIP", "Fitgirl"], description="The provider to search for"),
+        provider: Option(
+            required=True,
+            choices=[
+                discord.OptionChoice(name="SteamRip", value="steamrip"),
+                # discord.OptionChoice(name="Fitgirl", value="fitgirl"),
+            ],
+            description="The provider to search for",
+        ),
     ):
-        try:
-            game_results = await retrieve_game_links(name)
-            if game_results:
-                log.info(f"Found {len(game_results)} games")
+        provider_mapping = {
+            "steamrip": SteamRipProvider(),
+            "fitgirl": FitGirlProvider(),
+        }
+        provider_class = provider_mapping[provider]
+        if not provider_class:
+            await ctx.respond(
+                embed=error_template("Provider not found"), ephemeral=True
+            )
+            return
 
-                select = Select(
-                    custom_id="select_game",
-                    placeholder="Select a game",
-                    options=[
-                        discord.SelectOption(
-                            label=game["title"],
-                            description=game["fileSize"],
-                            value=str(index),
-                        )
-                        for index, game in enumerate(game_results)
-                    ],
+        provider_instance = provider_class
+
+        game_results = await retrieve_game_links(name, provider_instance)
+        if game_results:
+            log.info(f"Found {len(game_results)} games")
+
+            select = Select(
+                custom_id="select_game",
+                placeholder="Select a game",
+                options=[
+                    discord.SelectOption(
+                        label=game["title"],
+                        description=game["fileSize"],
+                        value=str(index),
+                    )
+                    for index, game in enumerate(game_results)
+                ],
+            )
+
+            view = discord.ui.View()
+            view.add_item(select)
+
+            async def callback(interaction):
+                await interaction.response.defer()
+                game = game_results[int(interaction.data["values"][0])]
+                download_links = [uri for uri in game["uris"]]
+
+                embed = discord.Embed(title=game["stripped_title"], color=0xFF0000)
+                try:
+                    game_details = retrieve_game_details(game["stripped_title"])
+
+                    embed.add_field(
+                        name="Summary",
+                        value=f"{game_details['summary']}",
+                        inline=False,
+                    )
+                    embed.add_field(
+                        name="File Size",
+                        value=f"📦 {game['fileSize']}",
+                        inline=True,
+                    )
+                    embed.add_field(
+                        name="Total Rating",
+                        value=f"⭐ {round((game_details['total_rating']/10), 1)}/10",
+                        inline=True,
+                    )
+                    embed.set_image(url=game_details["header"])
+                except IndexError as e:
+                    log.error(f"IGDB Data not found for {game['stripped_title']}")
+                    embed.add_field(
+                        name="File Size",
+                        value=f"📦 {game['fileSize']}",
+                        inline=True,
+                    )
+
+                if game["download_type"] == "direct":
+                    embed.add_field(
+                        name=f"🔗 Download Links",
+                        value="\n".join(download_links),
+                        inline=False,
+                    )
+
+                elif game["download_type"] == "torrent":
+                    embed.add_field(
+                        name=f"🔗 Magnet",
+                        value="\n".join(download_links),
+                        inline=False,
+                    )
+
+                embed.set_thumbnail(url=game["provider_logo"])
+                embed.set_footer(
+                    text="Be aware of the risks of downloading from third-party sites"
                 )
 
-                view = discord.ui.View()
-                view.add_item(select)
+                await interaction.followup.send(embed=embed)
 
-                async def callback(interaction):
-                    await interaction.response.defer()
-                    game = game_results[int(interaction.data["values"][0])]
-                    download_links = [uri for uri in game["uris"]]
+            select.callback = callback
 
-                    embed = discord.Embed(title=game["stripped_title"], color=0xFF0000)
-                    try:
-                        game_details = retrieve_game_details(game["stripped_title"])
+            embed = discord.Embed(title="Select a Game", color=0xFF0000)
+            game_titles = [
+                f"{i+1}. {game['title']}" for i, game in enumerate(game_results)
+            ]
+            embed.add_field(name="Games", value="\n".join(game_titles), inline=False)
 
-                        embed.add_field(
-                            name="Summary", value=f"{game_details['summary']}", inline=False
-                        )
-                        embed.add_field(
-                            name="File Size", value=f"📦 {game['fileSize']}", inline=True
-                        )
-                        embed.add_field(
-                            name="Total Rating",
-                            value=f"⭐ {round((game_details['total_rating']/10), 1)}/10",
-                            inline=True,
-                        )
-                        embed.add_field(
-                            name=f"🔗 Download Links",
-                            value="\n".join(download_links),
-                            inline=False,
-                        )
-                        embed.set_image(url=game_details["header"])
-                    except IndexError as e:
-                        log.error(f"IGDB Data not found for {game['stripped_title']}")
-                        embed.add_field(
-                            name="File Size", value=f"📦 {game['fileSize']}", inline=True
-                        )
-                        embed.add_field(
-                            name=f"🔗 Download Links",
-                            value="\n".join(download_links),
-                            inline=False,
-                        )
-                        
-                    embed.set_footer(text="Be aware of the risks of downloading from third-party sites")
-                        
-                    await interaction.followup.send(embed=embed)
+            await ctx.respond(embed=embed, view=view, ephemeral=True)
 
-                select.callback = callback
-
-                embed = discord.Embed(title="Select a Game", color=0xFF0000)
-                game_titles = [
-                    f"{i+1}. {game['title']}" for i, game in enumerate(game_results)
-                ]
-                embed.add_field(
-                    name="Games", value="\n".join(game_titles), inline=False
-                )
-
-                await ctx.respond(embed=embed, view=view, ephemeral=True)
-
-            else:
-                await ctx.respond(f"Game not found", ephemeral=True)
-        except Exception as e:
-            log.error(e)
-            await ctx.respond(embed=error_template(e), ephemeral=True)
+        else:
+            await ctx.respond(f"Game not found", ephemeral=True)
 
 
 def setup(client):
