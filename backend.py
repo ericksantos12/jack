@@ -32,12 +32,15 @@ try:
         log.critical("DISCORD_TOKEN is not set in the .env file.")
         sys.exit()
 
-    embed_footer = os.getenv('EMBED_FOOTER', '')
-    embed_color_str = os.getenv('EMBED_COLOR', '0x1a1aff')
     embed_url = os.getenv('EMBED_URL', '')
+    
+    igdb_client_id = os.getenv('IGDB_CLIENT_ID')
+    igdb_client_secret = os.getenv('IGDB_CLIENT_SECRET')
+    
+    if igdb_client_id is None or igdb_client_secret is None:
+        log.critical("IGDB_CLIENT_ID or IGDB_CLIENT_SECRET is not set in the .env file.")
+        sys.exit()
 
-    # Convert embed_color to int
-    embed_color = int(embed_color_str, base=16)
 except Exception as err:
     log.critical("Error getting variables from the .env file. Error: " + str(err))
     sys.exit()
@@ -59,7 +62,6 @@ def error_template(description: str) -> discord.Embed:
         color=0xff0000,
         url=embed_url
     )
-    _error_template.set_footer(text=embed_footer)
 
     return _error_template.copy()
 
